@@ -61,9 +61,13 @@ class ConfigModelPage(BasePage):
                     s.model_id = env_model  # overwrites top-level 'model'!
 
         # Derive provider_name from base_url if still empty
+        # Order matters: bigmodel/glm must precede anthropic, since GLM's
+        # Anthropic-compatible URL (open.bigmodel.cn/api/anthropic) contains
+        # the substring 'anthropic'.
         if not s.provider_name and s.base_url:
-            for hint in ['deepseek', 'openai', 'anthropic', 'openlab', 'glm',
-                         'dashscope', 'alibaba', 'aliyun', 'qwen']:
+            for hint in ['bigmodel', 'glm', 'zhipu', 'dashscope', 'alibaba',
+                         'aliyun', 'qwen', 'deepseek', 'openlab', 'openai',
+                         'anthropic']:
                 if hint in s.base_url.lower():
                     s.provider_name = hint
                     break
@@ -73,7 +77,10 @@ class ConfigModelPage(BasePage):
         # Auto-convert known provider base URLs
         _KNOWN_PROVIDERS = {
             'deepseek':  'https://api.deepseek.com',
-            'zhipu':     'https://open.bigmodel.cn/api/paas/v4',
+            # 智谱 GLM 的 Anthropic 兼容 endpoint（供 Claude / OpenCode 使用）
+            'bigmodel':  'https://open.bigmodel.cn/api/anthropic',
+            'glm':       'https://open.bigmodel.cn/api/anthropic',
+            'zhipu':     'https://open.bigmodel.cn/api/anthropic',
             'openai':    'https://api.openai.com/v1',
             'anthropic': 'https://api.anthropic.com/v1',
             # 阿里百炼 Coding Plan 专属 endpoint
@@ -268,9 +275,11 @@ class ConfigModelPage(BasePage):
         s.thinking = self.thinking_var.get()
 
         # provider_name is required — derive from base_url if empty
+        # bigmodel/glm precede anthropic — GLM's URL contains 'anthropic'.
         if not s.provider_name and s.base_url:
-            for hint in ['deepseek', 'openai', 'anthropic', 'openlab', 'glm',
-                         'dashscope', 'alibaba', 'aliyun', 'qwen']:
+            for hint in ['bigmodel', 'glm', 'zhipu', 'dashscope', 'alibaba',
+                         'aliyun', 'qwen', 'deepseek', 'openlab', 'openai',
+                         'anthropic']:
                 if hint in s.base_url.lower():
                     s.provider_name = hint
                     break

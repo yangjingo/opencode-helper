@@ -51,6 +51,20 @@ PROVIDER_CONFIG: Dict[str, Dict[str, Any]] = {
         'default_test_model': 'claude-sonnet-4',
         'available_models': ['claude-opus-4', 'claude-sonnet-4', 'claude-haiku-4'],
     },
+    'glm': {
+        'name': 'GLM (智谱)',
+        'test_strategy': 'anthropic_compatible',  # Anthropic-compatible endpoint
+        'timeout': (5, 30),
+        'retry': {'times': 2, 'backoff': 1.0},
+        'headers': {'anthropic-version': '2023-06-01'},
+        'default_test_model': 'glm-4.6',
+        'available_models': [
+            'glm-4.6', 'glm-4.5', 'glm-4-plus', 'glm-4-flash',
+            'glm-4-air', 'glm-4-airx',
+        ],
+        # GLM 的 Anthropic 兼容 endpoint（供 Claude / OpenCode 使用）
+        'base_url': 'https://open.bigmodel.cn/api/anthropic',
+    },
     'default': {
         'name': 'Default',
         'test_strategy': 'anthropic_compatible',
@@ -64,10 +78,16 @@ PROVIDER_CONFIG: Dict[str, Dict[str, Any]] = {
 
 
 # URL patterns for provider detection
+# Order matters: GLM is checked BEFORE anthropic because its endpoint
+# (open.bigmodel.cn/api/anthropic) contains the substring 'anthropic'.
 PROVIDER_URL_PATTERNS: Dict[str, List[str]] = {
     'dashscope': [
         'dashscope.aliyuncs.com',
         'coding.dashscope.aliyuncs.com',
+    ],
+    'glm': [
+        'bigmodel.cn',
+        'open.bigmodel',
     ],
     'deepseek': [
         'api.deepseek.com',
