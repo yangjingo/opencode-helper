@@ -173,17 +173,16 @@ def test_anthropic_compatible_appends_messages():
     print('  PASS: anthropic URL ->', called_url, '| header ok')
 
 
-def test_public_test_endpoint_uses_direct_post_for_dashscope():
-    """test_endpoint() must route dashscope -> direct_post (no /messages)."""
+def test_dashscope_appends_messages():
+    """test_endpoint() for dashscope appends /messages (Anthropic-compat, baseURL has /v1)."""
     with patch('core.validator.requests.post') as mock_post:
         mock_post.return_value = mock_response(200, {'content': [{'text': 'hi'}]})
         result = test_endpoint('https://coding.dashscope.aliyuncs.com/apps/anthropic/v1', 'key')
 
     called_url = mock_post.call_args[0][0]
-    assert 'messages' not in called_url, f'dashscope got /messages: {called_url}'
-    assert '/apps/anthropic/v1' in called_url
+    assert called_url.endswith('/v1/messages'), f'dashscope should append /messages: {called_url}'
     assert result.ok
-    print('  PASS: test_endpoint(dashscope) -> direct_post, no /messages')
+    print('  PASS: test_endpoint(dashscope) -> appends /messages:', called_url)
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -278,9 +277,9 @@ def test_diagnostics_connection_error():
 
 def test_provider_detection_matrix():
     cases = [
-        ('https://coding.dashscope.aliyuncs.com/apps/anthropic/v1', 'direct_post'),
-        ('https://dashscope.aliyuncs.com/apps/anthropic/v1', 'direct_post'),
-        ('https://api.deepseek.com', 'openai_compatible'),
+        ('https://coding.dashscope.aliyuncs.com/apps/anthropic/v1', 'anthropic_compatible'),
+        ('https://dashscope.aliyuncs.com/apps/anthropic/v1', 'anthropic_compatible'),
+        ('https://api.deepseek.com/anthropic', 'anthropic_compatible'),
         ('https://api.openai.com/v1', 'openai_compatible'),
         ('https://api.anthropic.com', 'anthropic_compatible'),
         ('https://unknown-provider.com/v1', 'anthropic_compatible'),  # default
@@ -314,7 +313,7 @@ ALL_TESTS = [
     ('openai_url', test_openai_compatible_appends_chat_completions),
     ('openai_no_double_v1', test_openai_compatible_no_double_v1),
     ('anthropic_url', test_anthropic_compatible_appends_messages),
-    ('endpoint_routes_dashscope', test_public_test_endpoint_uses_direct_post_for_dashscope),
+    ('dashscope_messages', test_dashscope_appends_messages),
     # Group 3: retry + diagnostics
     ('retry_5xx', test_retry_on_5xx_then_success),
     ('no_retry_4xx', test_no_retry_on_4xx),

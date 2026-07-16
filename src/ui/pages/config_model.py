@@ -74,9 +74,10 @@ class ConfigModelPage(BasePage):
         if not s.provider_name:
             s.provider_name = 'custom'
 
-        # Auto-convert known provider base URLs
+        # Auto-convert known provider base URLs (全部 Anthropic 兼容接口)
         _KNOWN_PROVIDERS = {
-            'deepseek':  'https://api.deepseek.com',
+            # DeepSeek 官方 Anthropic 兼容接口
+            'deepseek':  'https://api.deepseek.com/anthropic',
             # 智谱 GLM 的 Anthropic 兼容 endpoint（供 Claude / OpenCode 使用）
             'bigmodel':  'https://open.bigmodel.cn/api/anthropic',
             'glm':       'https://open.bigmodel.cn/api/anthropic',

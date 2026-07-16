@@ -12,8 +12,9 @@ from typing import Dict, List, Optional, Any
 # Each provider has specific testing strategies, timeouts, and available models
 PROVIDER_CONFIG: Dict[str, Dict[str, Any]] = {
     'dashscope': {
-        'name': 'Alibaba Coding Plan',
-        'test_strategy': 'direct_post',  # Direct POST to baseURL
+        'name': '阿里百炼 Coding Plan',
+        # Anthropic 兼容接口：baseURL 含 /v1，策略自动追加 /messages
+        'test_strategy': 'anthropic_compatible',
         'timeout': (5, 15),  # (connect timeout, read timeout)
         'retry': {'times': 2, 'backoff': 1.0},
         'headers': {'anthropic-version': '2023-06-01'},
@@ -26,12 +27,17 @@ PROVIDER_CONFIG: Dict[str, Dict[str, Any]] = {
     },
     'deepseek': {
         'name': 'DeepSeek',
-        'test_strategy': 'openai_compatible',
+        # 官方提供原生 Anthropic 兼容接口（OpenCode/Claude Code 用此）
+        'test_strategy': 'anthropic_compatible',
         'timeout': (5, 30),
         'retry': {'times': 3, 'backoff': 1.5},
-        'headers': {},
-        'default_test_model': 'deepseek-chat',
-        'available_models': ['deepseek-chat', 'deepseek-reasoner'],
+        'headers': {'anthropic-version': '2023-06-01'},
+        'default_test_model': 'deepseek-v4-flash',
+        'available_models': [
+            'deepseek-v4-flash', 'deepseek-v4-pro',
+            # 旧名（2026-07-24 弃用），保留兼容
+            'deepseek-chat', 'deepseek-reasoner',
+        ],
     },
     'openai': {
         'name': 'OpenAI',
@@ -52,15 +58,15 @@ PROVIDER_CONFIG: Dict[str, Dict[str, Any]] = {
         'available_models': ['claude-opus-4', 'claude-sonnet-4', 'claude-haiku-4'],
     },
     'glm': {
-        'name': 'GLM (智谱)',
-        'test_strategy': 'anthropic_compatible',  # Anthropic-compatible endpoint
+        'name': '智谱 GLM Coding Plan',
+        # 官方 Anthropic 兼容接口（Claude Code / OpenCode 用此）
+        'test_strategy': 'anthropic_compatible',
         'timeout': (5, 30),
         'retry': {'times': 2, 'backoff': 1.0},
         'headers': {'anthropic-version': '2023-06-01'},
-        'default_test_model': 'glm-4.6',
+        'default_test_model': 'glm-5.2',
         'available_models': [
-            'glm-4.6', 'glm-4.5', 'glm-4-plus', 'glm-4-flash',
-            'glm-4-air', 'glm-4-airx',
+            'glm-5.2', 'glm-4.7', 'glm-4.6', 'glm-4.5',
         ],
         # GLM 的 Anthropic 兼容 endpoint（供 Claude / OpenCode 使用）
         'base_url': 'https://open.bigmodel.cn/api/anthropic',

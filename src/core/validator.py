@@ -149,13 +149,20 @@ def _test_openai_compatible(url: str, api_key: str, model_id: str, config: dict,
 @register_strategy('anthropic_compatible')
 def _test_anthropic_compatible(url: str, api_key: str, model_id: str, config: dict,
                                max_tokens: int = 1) -> ValidationResult:
-    """Anthropic compatible format: POST /v1/messages."""
+    """Anthropic compatible format: POST /v1/messages.
+
+    Sends both `Authorization: Bearer` and `x-api-key` — the standard Anthropic
+    API accepts either, and major Anthropic-compatible providers (阿里百炼 /
+    智谱 GLM / DeepSeek) document `x-api-key` as their preferred auth header.
+    Sending both maximizes compatibility.
+    """
     base = url.rstrip('/')
     if not base.endswith('/v1'):
         base = f'{base}/v1'
     endpoint = f'{base}/messages'
     headers = {
         'Authorization': f'Bearer {api_key}',
+        'x-api-key': api_key,
         'Content-Type': 'application/json',
         'anthropic-version': '2023-06-01',
         **config.get('headers', {}),
