@@ -21,7 +21,7 @@ $env:NO_PROXY = "localhost,127.0.0.1,::1{extra_no_proxy}"
 BASH_WRAPPER = '''
 # OpenCode — auto-clears upstream proxy
 opencode() {
-  unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy
+  unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
   command opencode "$@"
 }
 '''
@@ -29,15 +29,72 @@ opencode() {
 PS_WRAPPER = '''
 # OpenCode — auto-clears upstream proxy
 function opencode {
-    Remove-Item Env:HTTP_PROXY, Env:HTTPS_PROXY, Env:http_proxy, Env:https_proxy -ErrorAction SilentlyContinue
-    & opencode @args
+    Remove-Item Env:HTTP_PROXY, Env:HTTPS_PROXY, Env:http_proxy, Env:https_proxy, Env:ALL_PROXY, Env:all_proxy -ErrorAction SilentlyContinue
+    $opencodeCommand = Get-Command opencode -CommandType Application -ErrorAction Stop
+    & $opencodeCommand.Source @args
 }
 '''
+
+# Human-facing commands rendered by the Direct Connection page. Keep the
+# command text here so UI, documentation, and tests cannot drift apart.
+DIRECT_POWERSHELL_PROFILE_COMMAND = '''$profileDirectory = Split-Path -Parent $PROFILE
+New-Item -ItemType Directory -Force -Path $profileDirectory | Out-Null
+@'
+# OpenCode: always connect directly (bypass HTTP/HTTPS/SOCKS proxies)
+function opencode {
+    Remove-Item Env:HTTP_PROXY, Env:HTTPS_PROXY, Env:http_proxy, Env:https_proxy, Env:ALL_PROXY, Env:all_proxy -ErrorAction SilentlyContinue
+    $opencodeCommand = Get-Command opencode -CommandType Application -ErrorAction Stop
+    & $opencodeCommand.Source @args
+}
+'@ | Add-Content -Path $PROFILE
+. $PROFILE'''
+
+DIRECT_POWERSHELL_COMMAND = (
+    'Remove-Item Env:HTTP_PROXY, Env:HTTPS_PROXY -ErrorAction SilentlyContinue; opencode'
+)
+
+
+def direct_connection_commands() -> dict[str, str]:
+    """Return copy-ready PowerShell commands for permanent and one-shot use."""
+    return {
+        'powershell_profile': DIRECT_POWERSHELL_PROFILE_COMMAND,
+        'powershell_once': DIRECT_POWERSHELL_COMMAND,
+    }
+
+def _wininet_system_proxy() -> dict:
+    """Read the Windows WinINET (system-wide) proxy setting.
+
+    opencode-ai honors this proxy in addition to environment variables. The
+    helper app deliberately never *modifies* system proxy settings, but it must
+    still detect them so users learn their endpoint may be intercepted. Returns
+    an empty dict off-Windows or when the value cannot be read.
+    """
+    if os.name != 'nt':
+        return {}
+    try:
+        import winreg
+        key = winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            r'Software\Microsoft\Windows\CurrentVersion\Internet Settings')
+        try:
+            enabled, _ = winreg.QueryValueEx(key, 'ProxyEnable')
+            try:
+                server, _ = winreg.QueryValueEx(key, 'ProxyServer')
+            except OSError:
+                server = ''
+        finally:
+            winreg.CloseKey(key)
+    except OSError:
+        return {}
+    return {'enabled': bool(enabled), 'server': server}
+
 
 def detect_all_proxies() -> dict:
     http = os.environ.get('HTTP_PROXY', '') or os.environ.get('http_proxy', '')
     https = os.environ.get('HTTPS_PROXY', '') or os.environ.get('https_proxy', '')
-    return {'has_proxy': bool(http or https), 'http': http, 'https': https}
+    wininet = _wininet_system_proxy()
+    has_proxy = bool(http or https or wininet.get('enabled'))
+    return {'has_proxy': has_proxy, 'http': http, 'https': https, 'wininet': wininet}
 
 def is_internal_address(address: str) -> bool:
     host = address
@@ -67,16 +124,20 @@ def generate_launcher_scripts(install_dir: str, install_method: str, extra_no_pr
 def write_shell_profile_wrapper(method: str) -> list[str]:
     modified = []
     marker = '# OpenCode — auto-clears upstream proxy'
-    bashrc = Path.home() / '.bashrc'
-    content = ''
-    if bashrc.exists():
-        content = bashrc.read_text()
-    if marker not in content:
-        if content and not content.endswith('\n'):
-            content += '\n'
-        content += BASH_WRAPPER
-        bashrc.write_text(content)
-        modified.append(str(bashrc))
+    # The desktop helper targets Windows. Do not unexpectedly edit .bashrc on
+    # Windows; use its native PowerShell profile. Keep Bash behavior only for
+    # development on Unix-like systems.
+    if os.name != 'nt':
+        bashrc = Path.home() / '.bashrc'
+        content = ''
+        if bashrc.exists():
+            content = bashrc.read_text()
+        if marker not in content:
+            if content and not content.endswith('\n'):
+                content += '\n'
+            content += BASH_WRAPPER
+            bashrc.write_text(content)
+            modified.append(str(bashrc))
     try:
         result = subprocess.run(['powershell', '-NoProfile', '-Command', 'echo $PROFILE'],
                                 capture_output=True, text=True, timeout=5)

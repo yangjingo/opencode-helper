@@ -24,13 +24,22 @@ class EnvironmentPage(BasePage):
                                         fg=COLORS['yellow'], font=(FONTS['body']['family'], FONTS['body']['size']))
         self._loading_label.pack(pady=20)
 
+        # One full-width action row: every control gets a grid column, so
+        # “下一步” never leaves a large visual gap after the primary action.
         btn_frame = tk.Frame(self, bg=COLORS['bg'])
-        btn_frame.pack(pady=6)
-        PixelButton(btn_frame, text=f'[ {t("btn.back")} ]', command=app.go_back).pack(side='left', padx=5)
+        btn_frame.pack(pady=6, fill='x', padx=12)
+        for column in range(4):
+            btn_frame.grid_columnconfigure(column, weight=1, uniform='environment-actions')
+
+        PixelButton(btn_frame, text=f'[ {t("btn.back")} ]', command=app.go_back).grid(
+            row=0, column=0, padx=3, sticky='ew')
         self.redetect_btn = PixelButton(btn_frame, text=f'[ {t("env.redetect")} ]', command=self._run_detection)
-        self.redetect_btn.pack(side='left', padx=5)
+        self.redetect_btn.grid(row=0, column=1, padx=3, sticky='ew')
+        self.primary_btn = PixelButton(btn_frame, text='[ 修复 / 安装 OpenCode ]', command=self._on_primary_action)
+        self.primary_btn.grid(row=0, column=2, padx=3, sticky='ew')
+        self.primary_btn.set_enabled(False)
         self.next_btn = PixelButton(btn_frame, text=f'[ {t("btn.next")} ]', command=self._on_next)
-        self.next_btn.pack(side='left', padx=5)
+        self.next_btn.grid(row=0, column=3, padx=3, sticky='ew')
         self.next_btn.set_enabled(False)
 
         self._run_detection()
@@ -41,6 +50,7 @@ class EnvironmentPage(BasePage):
         self.scroll.clear()
         self._pending_report = None
         self.next_btn.set_enabled(False)
+        self.primary_btn.set_enabled(False)
         self._loading_label = tk.Label(self.scroll.inner, text='⏳ 检测中...', bg=COLORS['bg'],
                                         fg=COLORS['yellow'], font=(FONTS['body']['family'], FONTS['body']['size']))
         self._loading_label.pack(pady=20)
@@ -110,6 +120,15 @@ class EnvironmentPage(BasePage):
         else:
             oc_val = t('detect.not_installed')
         self._row_ok('OpenCode', oc_val, report.get('opencode_installed', False))
+        runtime_ready = bool(report.get('node_ok')) and bool(report.get('npm_ok'))
+        opencode_ready = bool(report.get('opencode_installed'))
+        if not runtime_ready:
+            self.primary_btn.configure(text='[ 一键修复环境 ]')
+        elif not opencode_ready:
+            self.primary_btn.configure(text='[ 一键安装 OpenCode ]')
+        else:
+            self.primary_btn.configure(text='[ 更新 OpenCode ]')
+        self.primary_btn.set_enabled(True)
 
         # ═══ Claude / LLM Env Vars ═══
         claude_env = report.get('claude_env_vars', {})
@@ -353,6 +372,32 @@ class EnvironmentPage(BasePage):
                 self._go_next()
         else:
             self._go_next()
+
+    def _on_upgrade(self):
+        """Open the same live terminal page in upgrade mode."""
+        self.app.state.opencode_action = 'upgrade'
+        from ui.pages.install import InstallPage
+        self.app.show_page(InstallPage, 'install')
+
+    def _on_primary_action(self):
+        """Dispatch the single contextual action shown in the compact bar."""
+        report = self.app.state.env_report
+        if not (report.get('node_ok') and report.get('npm_ok')):
+            self._on_fix_missing()
+        elif not report.get('opencode_installed'):
+            self._on_install_opencode()
+        else:
+            self._on_upgrade()
+
+    def _on_fix_missing(self):
+        """Run the domestic-mirror PowerShell repair without a confirmation dialog."""
+        from ui.pages.env_fix import EnvFixPage
+        self.app.show_page(EnvFixPage, 'env_fix')
+
+    def _on_install_opencode(self):
+        self.app.state.opencode_action = 'install'
+        from ui.pages.install import InstallPage
+        self.app.show_page(InstallPage, 'install')
 
     def _go_next(self):
         report = self.app.state.env_report

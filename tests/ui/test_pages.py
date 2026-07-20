@@ -102,3 +102,25 @@ def test_finish_page_creates():
     page = FinishPage(app.container, app)
     assert page is not None
     root.destroy()
+
+def test_finish_page_displays_and_copies_launch_command():
+    from ui.pages.finish import FinishPage
+    from app import App
+    root = _create_root()
+    app = App(root)
+    page = FinishPage(app.container, app)
+    expected = 'Remove-Item Env:HTTP_PROXY, Env:HTTPS_PROXY -ErrorAction SilentlyContinue; opencode'
+    assert page._launch_command == expected
+    page._copy_launch_command()
+    assert root.clipboard_get() == expected
+    root.destroy()
+
+def test_direct_connect_page_creates_and_copies_powershell_command():
+    from ui.pages.direct_connect import DirectConnectPage
+    from app import App
+    root = _create_root()
+    app = App(root)
+    page = DirectConnectPage(app.container, app)
+    page._copy_command('powershell_once')
+    assert root.clipboard_get().endswith('; opencode')
+    root.destroy()

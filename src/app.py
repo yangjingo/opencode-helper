@@ -1,4 +1,8 @@
 """Main application window, page routing, wizard state, and navigation."""
+import os
+import subprocess
+import sys
+from pathlib import Path
 import tkinter as tk
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Type
@@ -9,11 +13,13 @@ from ui.theme import COLORS, FONTS, apply as apply_theme
 @dataclass
 class WizardState:
     install_method: str = 'npm'
+    opencode_action: str = 'install'
     install_path: str = ''
     provider_name: str = ''
     display_name: str = ''
     api_key: str = ''
     base_url: str = ''
+    api_style: str = ''
     model_id: str = ''
     model_name: str = ''
     reasoning: bool = True
@@ -31,6 +37,7 @@ class WizardState:
             'display_name': self.display_name,
             'api_key': self.api_key,
             'base_url': self.base_url,
+            'api_style': self.api_style,
             'model_id': self.model_id,
             'model_name': self.model_name,
             'reasoning': self.reasoning,
@@ -42,7 +49,7 @@ class WizardState:
 _PAGE_STEP: Dict[str, int] = {
     'welcome': 1, 'migration': 2, 'environment': 3, 'env_fix': 4,
     'install_method': 5, 'install_path': 5, 'install': 6,
-    'config_model': 7, 'verify': 8, 'finish': 10,
+    'config_model': 7, 'verify': 8, 'finish': 10, 'direct_connect': 10,
 }
 _TOTAL_STEPS = 10
 
@@ -114,7 +121,7 @@ class App:
         self.content_frame = tk.Frame(self.container, bg=COLORS['bg'])
         self.content_frame.pack(fill='both', expand=True, padx=2, pady=(2, 0))
 
-        # Bottom bar: step indicator + keyboard hint
+        # Bottom bar: step indicator + help link + keyboard hint
         bottom = tk.Frame(self.container, bg=COLORS['bg'], height=32)
         bottom.pack(fill='x', side='bottom', pady=(0, 2))
         bottom.pack_propagate(False)
@@ -129,11 +136,40 @@ class App:
         )
         self._key_hint.pack(side='right', padx=10)
 
+        self._docs_link = tk.Label(
+            bottom, text='[?] 遇到问题？打开文档',
+            bg=COLORS['bg'], fg=COLORS['neon_green'], cursor='hand2',
+            font=(FONTS['log']['family'], FONTS['log']['size'], 'underline'),
+        )
+        self._docs_link.pack(side='right', padx=(0, 14))
+        self._docs_link.bind('<Button-1>', lambda _event: self._open_docs())
+
         # Global keyboard bindings
         root.bind('<Return>', self._on_enter)
         root.bind('<Escape>', self._on_escape)
         for i in range(1, 10):
             root.bind(str(i), lambda e, n=i: self._on_number(n))
+
+    def _docs_dir(self) -> Path:
+        """Return the documentation directory for development and packaged builds."""
+        if getattr(sys, 'frozen', False):
+            # Release builds ship RELEASE.md beside the EXE rather than a docs
+            # directory, so open the release folder directly.
+            return Path(sys.executable).resolve().parent
+        return Path(__file__).resolve().parent.parent / 'docs'
+
+    def _open_docs(self) -> None:
+        """Open the bundled documentation folder in the system file explorer."""
+        docs_dir = self._docs_dir()
+        if docs_dir.is_dir():
+            if os.name == 'nt':
+                os.startfile(str(docs_dir))
+            elif sys.platform == 'darwin':
+                subprocess.Popen(['open', str(docs_dir)])
+            else:
+                subprocess.Popen(['xdg-open', str(docs_dir)])
+            return
+        self._docs_link.configure(text='[!] 文档目录未找到')
 
     def show_page(self, page_class, page_name: str = ''):
         """Navigate to a new page, destroying the old one."""

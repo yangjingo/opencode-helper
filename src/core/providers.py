@@ -27,11 +27,10 @@ PROVIDER_CONFIG: Dict[str, Dict[str, Any]] = {
     },
     'deepseek': {
         'name': 'DeepSeek',
-        # 官方提供原生 Anthropic 兼容接口（OpenCode/Claude Code 用此）
-        'test_strategy': 'anthropic_compatible',
+        'test_strategy': 'openai_compatible',
         'timeout': (5, 30),
         'retry': {'times': 3, 'backoff': 1.5},
-        'headers': {'anthropic-version': '2023-06-01'},
+        'headers': {},
         'default_test_model': 'deepseek-v4-flash',
         'available_models': [
             'deepseek-v4-flash', 'deepseek-v4-pro',
@@ -39,53 +38,80 @@ PROVIDER_CONFIG: Dict[str, Dict[str, Any]] = {
             'deepseek-chat', 'deepseek-reasoner',
         ],
     },
-    'openai': {
-        'name': 'OpenAI',
+    'moonshot': {
+        'name': 'Moonshot AI (Kimi)',
         'test_strategy': 'openai_compatible',
         'timeout': (5, 30),
         'retry': {'times': 3, 'backoff': 1.5},
         'headers': {},
-        'default_test_model': 'gpt-4o',
-        'available_models': ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo'],
+        'default_test_model': 'moonshot-v1-8k',
+        'available_models': ['moonshot-v1-8k', 'moonshot-v1-32k', 'moonshot-v1-128k'],
     },
-    'anthropic': {
-        'name': 'Anthropic',
-        'test_strategy': 'anthropic_compatible',
+    'minimax': {
+        'name': 'MiniMax',
+        'test_strategy': 'openai_compatible',
         'timeout': (5, 30),
-        'retry': {'times': 2, 'backoff': 1.0},
+        'retry': {'times': 3, 'backoff': 1.5},
         'headers': {},
-        'default_test_model': 'claude-sonnet-4',
-        'available_models': ['claude-opus-4', 'claude-sonnet-4', 'claude-haiku-4'],
+        'default_test_model': 'MiniMax-M2.7',
+        'available_models': ['MiniMax-M2.7', 'MiniMax-M2.7-highspeed',
+                             'MiniMax-M2.5', 'MiniMax-M2.5-highspeed'],
+    },
+    'mimo': {
+        'name': 'Xiaomi MiMo',
+        'test_strategy': 'openai_compatible',
+        'timeout': (5, 30),
+        'retry': {'times': 3, 'backoff': 1.5},
+        'headers': {},
+        'default_test_model': 'mimo-v2.5-pro',
+        'available_models': ['mimo-v2.5-pro'],
+    },
+    'longcat': {
+        'name': 'LongCat',
+        'test_strategy': 'openai_compatible',
+        'timeout': (5, 30),
+        'retry': {'times': 3, 'backoff': 1.5},
+        'headers': {},
+        'default_test_model': 'LongCat-2.0',
+        'available_models': ['LongCat-2.0'],
+    },
+    'qianfan': {
+        'name': '百度千帆',
+        'test_strategy': 'openai_compatible',
+        'timeout': (5, 30),
+        'retry': {'times': 3, 'backoff': 1.5},
+        'headers': {},
+        'default_test_model': 'ernie-4.5-turbo-128k',
+        'available_models': ['ernie-4.5-turbo-128k'],
     },
     'glm': {
         'name': '智谱 GLM Coding Plan',
-        # 官方 Anthropic 兼容接口（Claude Code / OpenCode 用此）
-        'test_strategy': 'anthropic_compatible',
+        # OpenCode 的 Coding API 使用 OpenAI Chat Completions；显式
+        # /api/anthropic 地址会在 get_provider_config() 中切回 Anthropic。
+        'test_strategy': 'openai_compatible',
         'timeout': (5, 30),
-        'retry': {'times': 2, 'backoff': 1.0},
-        'headers': {'anthropic-version': '2023-06-01'},
+        'retry': {'times': 3, 'backoff': 1.0},
+        'headers': {},
         'default_test_model': 'glm-5.2',
         'available_models': [
             'glm-5.2', 'glm-4.7', 'glm-4.6', 'glm-4.5',
         ],
-        # GLM 的 Anthropic 兼容 endpoint（供 Claude / OpenCode 使用）
-        'base_url': 'https://open.bigmodel.cn/api/anthropic',
+        'base_url': 'https://open.bigmodel.cn/api/coding/paas/v4',
     },
     'default': {
-        'name': 'Default',
-        'test_strategy': 'anthropic_compatible',
+        'name': '自定义 / 内网网关',
+        'test_strategy': 'openai_compatible',
         'timeout': (5, 30),
         'retry': {'times': 2, 'backoff': 1.0},
         'headers': {},
-        'default_test_model': 'claude-sonnet-4',
+        'default_test_model': '',
         'available_models': [],
     }
 }
 
 
 # URL patterns for provider detection
-# Order matters: GLM is checked BEFORE anthropic because its endpoint
-# (open.bigmodel.cn/api/anthropic) contains the substring 'anthropic'.
+# Order matters: Chinese vendor hostnames are specific and are checked first.
 PROVIDER_URL_PATTERNS: Dict[str, List[str]] = {
     'dashscope': [
         'dashscope.aliyuncs.com',
@@ -99,14 +125,14 @@ PROVIDER_URL_PATTERNS: Dict[str, List[str]] = {
         'api.deepseek.com',
         'deepseek.com',
     ],
-    'openai': [
-        'api.openai.com',
-        'openai.com',
+    'moonshot': [
+        'moonshot.cn',
+        'kimi.com',
     ],
-    'anthropic': [
-        'api.anthropic.com',
-        'anthropic.com',
-    ],
+    'minimax': ['minimaxi.com', 'minimax.io'],
+    'mimo': ['xiaomimimo.com', 'mimo.mi.com'],
+    'longcat': ['longcat.chat'],
+    'qianfan': ['baidubce.com'],
 }
 
 
@@ -118,7 +144,7 @@ def _detect_provider(base_url: str) -> str:
         base_url: The API base URL to analyze.
 
     Returns:
-        The provider key ('dashscope', 'deepseek', 'openai', 'anthropic')
+        The provider key ('dashscope', 'deepseek', 'glm', 'moonshot', 'minimax', 'mimo', 'longcat', 'qianfan')
         or 'default' if no match is found.
     """
     if not base_url:
@@ -146,7 +172,15 @@ def get_provider_config(base_url: str) -> Dict[str, Any]:
         Returns the 'default' configuration if no specific provider is detected.
     """
     provider = _detect_provider(base_url)
-    return PROVIDER_CONFIG.get(provider, PROVIDER_CONFIG['default']).copy()
+    config = PROVIDER_CONFIG.get(provider, PROVIDER_CONFIG['default']).copy()
+    # Provider-specific catalogs are domestic-only, but any explicit Anthropic
+    # Messages URL remains a valid protocol choice for Claude Code migration.
+    if 'anthropic' in base_url.lower():
+        config['test_strategy'] = 'anthropic_compatible'
+        config['headers'] = {'anthropic-version': '2023-06-01'}
+    # DeepSeek offers both its native OpenAI-compatible API and an Anthropic
+    # compatible route used by Claude Code. Preserve that route when detected.
+    return config
 
 
 def resolve_test_model(provider_config: Dict[str, Any], user_model_id: Optional[str]) -> str:

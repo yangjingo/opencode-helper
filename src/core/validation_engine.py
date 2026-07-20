@@ -1,12 +1,9 @@
-"""Parallel validation engine for OpenCode verification.
+"""Sequential validation engine for OpenCode verification.
 
-This module provides the ValidationEngine class which executes
-validation tasks (endpoint, model, cli, config) in parallel with
-progress callbacks and timing tracking.
+Each check completes before the UI advances its progress indicator.
 """
 
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable, List, Optional
 
 from app import WizardState
@@ -14,18 +11,13 @@ from core.providers import get_provider_config, resolve_test_model
 from core.validation_result import Status, ValidationReport, ValidationResult
 from core.validator import (
     test_config_written,
-    test_endpoint,
     test_model,
     test_opencode_cli,
 )
 
 
 class ValidationEngine:
-    """Parallel validation engine supporting fine-grained progress callbacks.
-
-    Executes endpoint, model, CLI, and config validation tasks in parallel
-    using a ThreadPoolExecutor. Supports progress reporting and comprehensive
-    error handling.
+    """Sequential validation engine supporting result-driven progress updates.
 
     Usage:
         engine = ValidationEngine(state)
@@ -47,26 +39,25 @@ class ValidationEngine:
         self.state = state
         self.provider_config = get_provider_config(state.base_url)
         self.on_progress: Optional[Callable[[str, float], None]] = None
+        self.on_result: Optional[Callable[[str, ValidationResult, float], None]] = None
 
     def run_all(self) -> ValidationReport:
-        """Execute all validation tasks in parallel and return a complete report.
+        """Execute each validation task once and return a complete report.
 
-        Tasks are executed concurrently using ThreadPoolExecutor:
-        - endpoint: API connectivity test
+        Tasks run in order:
         - model: Model inference test
-        - cli: OpenCode CLI test
         - config: Configuration file test
+        - cli: OpenCode CLI test
 
-        Progress callbacks are triggered at 0.25 increments (0.0, 0.25, 0.5, 0.75, 1.0).
+        Progress updates occur only after each task has a concrete result.
 
         Returns:
             ValidationReport containing all results and overall status.
         """
         tasks = [
-            ('endpoint', self._test_endpoint),
             ('model', self._test_model),
-            ('cli', self._test_cli),
             ('config', self._test_config),
+            ('cli', self._test_cli),
         ]
 
         results: List[ValidationResult] = []
@@ -75,39 +66,23 @@ class ValidationEngine:
 
         start_time = time.perf_counter()
 
-        with ThreadPoolExecutor(max_workers=4) as executor:
-            # Submit all tasks
-            future_to_task = {
-                executor.submit(task_func): name
-                for name, task_func in tasks
-            }
-
-            # Process results as they complete
-            for future in as_completed(future_to_task):
-                name = future_to_task[future]
-                try:
-                    result = future.result()
-                except Exception as e:
-                    # Convert exception to failed result
-                    result = ValidationResult(
-                        name=name,
-                        status=Status.FAILED,
-                        duration_ms=0,
-                        message=f'Validation failed with exception: {e}',
-                        detail=str(e),
-                        suggestion=f'Check the {name} configuration and try again.',
-                        metadata={'exception_type': type(e).__name__},
-                    )
-
-                results.append(result)
-                completed_count += 1
-
-                # Calculate progress (0.0 to 1.0)
-                progress = completed_count / total_tasks
-
-                # Trigger progress callback if set
-                if self.on_progress:
-                    self.on_progress(name, progress)
+        for name, task_func in tasks:
+            try:
+                result = task_func()
+            except Exception as e:
+                result = ValidationResult(
+                    name=name, status=Status.FAILED, duration_ms=0,
+                    message=f'Validation failed with exception: {e}', detail=str(e),
+                    suggestion=f'Check the {name} configuration and try again.',
+                    metadata={'exception_type': type(e).__name__},
+                )
+            results.append(result)
+            completed_count += 1
+            progress = completed_count / total_tasks
+            if self.on_result:
+                self.on_result(name, result, progress)
+            if self.on_progress:
+                self.on_progress(name, progress)
 
         total_duration_ms = int((time.perf_counter() - start_time) * 1000)
 
@@ -182,21 +157,6 @@ class ValidationEngine:
                 metadata={'exception_type': type(e).__name__},
             )
 
-    def _test_endpoint(self) -> ValidationResult:
-        """Test API endpoint connectivity.
-
-        Uses the provider's test_strategy to determine how to test
-        the endpoint. Handles authentication and basic connectivity.
-
-        Returns:
-            ValidationResult with endpoint connectivity status.
-        """
-        return self._run_with_timing(
-            'endpoint',
-            lambda: test_endpoint(self.state.base_url, self.state.api_key,
-                                  self.provider_config)
-        )
-
     def _test_model(self) -> ValidationResult:
         """Test model inference.
 
@@ -222,9 +182,12 @@ class ValidationEngine:
         Returns:
             ValidationResult with CLI test status.
         """
+        provider_id = (getattr(self.state, 'provider_name', '') or '').strip()
+        model_id = self.state.model_id.strip()
+        model_ref = f'{provider_id}/{model_id}' if provider_id and model_id else model_id
         return self._run_with_timing(
             'cli',
-            lambda: test_opencode_cli(self.state.model_id)
+            lambda: test_opencode_cli(model_ref)
         )
 
     def _test_config(self) -> ValidationResult:
@@ -236,7 +199,10 @@ class ValidationEngine:
         Returns:
             ValidationResult with configuration file status.
         """
+        provider_id = (getattr(self.state, 'provider_name', '') or '').strip()
+        model_id = (getattr(self.state, 'model_id', '') or '').strip()
+        expected_model_ref = f'{provider_id}/{model_id}' if provider_id and model_id else ''
         return self._run_with_timing(
             'config',
-            test_config_written
+            lambda: test_config_written(expected_model_ref)
         )

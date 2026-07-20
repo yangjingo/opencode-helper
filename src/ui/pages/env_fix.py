@@ -5,6 +5,7 @@ from ui.theme import COLORS, FONTS
 from ui.widgets import PixelButton, PixelTerminal, PixelProgress, BasePage
 from i18n import t
 from core.env_fixer import auto_fix_environment
+from core.detector import clear_cache, detect_all
 
 class EnvFixPage(BasePage):
     def __init__(self, parent, app):
@@ -35,9 +36,20 @@ class EnvFixPage(BasePage):
             def log(msg):
                 self._safe_after(10, lambda m=msg: self.terminal.write(m))
             log('▶ Running auto-fix...')
-            auto_fix_environment(self.app.state.env_report, progress_callback=log)
+            results = auto_fix_environment(self.app.state.env_report, progress_callback=log)
+            # A Node MSI updates machine PATH only for newly started processes.
+            # Re-run the robust detector anyway: it also sees the installed
+            # binary directly, without requiring the user to restart Explorer.
+            clear_cache()
+            refreshed = detect_all()
+            self.app.state.env_report = refreshed
+            if refreshed.get('node_ok') and refreshed.get('npm_ok'):
+                log('✓ 修复后复检通过：Node.js 与 npm 已就绪。')
+            else:
+                log('⚠ 修复命令已执行，但仍未检测到完整环境。请完成 UAC 安装后点击“重新检测”。')
+                log(f'  nodejs={results.get("nodejs", "not-needed")}, npm_registry={results.get("npm_registry", "not-needed")}')
             self._safe_after(10, lambda: self.progress.set_progress(100))
-            self._safe_after(10, lambda: self.progress.set_text('Done'))
+            self._safe_after(10, lambda: self.progress.set_text('复检完成'))
             self._safe_after(10, lambda: self.next_btn.set_enabled(True))
         threading.Thread(target=run, daemon=True).start()
 

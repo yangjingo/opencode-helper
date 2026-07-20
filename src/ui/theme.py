@@ -63,6 +63,15 @@ FONTS = {
     'pixel':    {'family': 'Consolas', 'size': 7},
 }
 
+# Named widget defaults retained for plugins and older UI pages.
+STYLES = {
+    'frame': {'bg': COLORS['bg']},
+    'button': {'bg': COLORS['dark_gray'], 'fg': COLORS['neon_green']},
+    'label': {'bg': COLORS['bg'], 'fg': COLORS['white']},
+    'entry': {'bg': COLORS['deep_purple'], 'fg': COLORS['neon_green']},
+    'terminal': {'bg': COLORS['black'], 'fg': COLORS['neon_green']},
+}
+
 BORDER_CHARS = {
     'tl': '╔', 'tr': '╗', 'bl': '╚', 'br': '╝',
     'h':  '═', 'v':  '║', 't':  '╦', 'b':  '╩',

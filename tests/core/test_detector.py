@@ -27,6 +27,54 @@ def test_detect_node_not_installed(monkeypatch):
     assert info['node_installed'] is False
     assert info['node_ok'] is False
 
+def test_detection_uses_hidden_windows_processes(monkeypatch):
+    monkeypatch.setattr(detector.os, 'name', 'nt')
+    monkeypatch.setattr(detector.subprocess, 'CREATE_NO_WINDOW', 1234, raising=False)
+    assert detector.hidden_process_kwargs() == {'creationflags': 1234}
+
+def test_detect_node_from_fnm_store_when_path_is_missing(monkeypatch, tmp_path):
+    """Explorer-launched EXEs do not inherit fnm's shell-only PATH entry."""
+    fnm_node = tmp_path / 'fnm' / 'node-versions' / 'v22.18.0' / 'installation' / 'node.exe'
+    fnm_node.parent.mkdir(parents=True)
+    fnm_node.write_bytes(b'placeholder')
+    monkeypatch.setenv('APPDATA', str(tmp_path))
+    monkeypatch.setattr(detector.Path, 'home', lambda: tmp_path)
+    monkeypatch.setattr(detector.shutil, 'which', lambda _: '')
+    monkeypatch.setattr(detector, '_paths_from_where', lambda _: [])
+
+    def mock_run(cmd, **kw):
+        class R: stdout = 'v22.18.0'; stderr = ''; returncode = 0
+        return R()
+    monkeypatch.setattr(detector.subprocess, 'run', mock_run)
+
+    info = detector.detect_node()
+    assert info['node_installed'] is True
+    assert info['node_ok'] is True
+    assert info['node_path'] == str(fnm_node)
+
+def test_detect_npm_next_to_node_when_path_is_missing(monkeypatch, tmp_path):
+    node_dir = tmp_path / 'fnm' / 'node-versions' / 'v22.18.0' / 'installation'
+    node_dir.mkdir(parents=True)
+    (node_dir / 'node.exe').write_bytes(b'placeholder')
+    npm = node_dir / 'npm.cmd'
+    npm.write_text('@echo off')
+    monkeypatch.setenv('APPDATA', str(tmp_path))
+    monkeypatch.setattr(detector.Path, 'home', lambda: tmp_path)
+    monkeypatch.setattr(detector.shutil, 'which', lambda _: '')
+    monkeypatch.setattr(detector, '_paths_from_where', lambda _: [])
+
+    def mock_run(cmd, **kw):
+        class R:
+            stderr = ''; returncode = 0
+            stdout = 'v22.18.0' if str(cmd[0]).endswith('node.exe') else '10.9.0'
+        return R()
+    monkeypatch.setattr(detector.subprocess, 'run', mock_run)
+
+    info = detector.detect_npm()
+    assert info['npm_installed'] is True
+    assert info['npm_ok'] is True
+    assert info['npm_path'] == str(npm)
+
 def test_detect_proxy(monkeypatch):
     monkeypatch.setenv('HTTP_PROXY', 'http://proxy.company.com:8080')
     monkeypatch.setenv('HTTPS_PROXY', '')

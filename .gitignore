@@ -20,6 +20,14 @@ version_info.txt
 .pytest_cache/
 .coverage
 htmlcov/
+.test-tmp/
+.verify-provider-tmp/
+.anthropic-verify/
+.final-anthropic-verify/
+.full-protocol-verify/
+.opencode-anthropic-e2e/
+.opencode-success-mock/
+.protocol-matrix-verify/
 
 # IDE
 .vscode/
@@ -41,3 +49,7 @@ desktop.ini
 # Large installer binaries (exceed GitHub 100MB limit)
 OpenCode Desktop Installer.exe
 *.exe
+
+# Code-signing private keys must never be committed
+*.pfx
+*.p12

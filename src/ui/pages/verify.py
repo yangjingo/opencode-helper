@@ -1,7 +1,7 @@
-"""Enhanced verification page — parallel validation with progress + diagnostics.
+"""Verification page — sequential validation with progress + diagnostics.
 
-Runs all 4 tests (endpoint, model, CLI, config) in parallel via
-ValidationEngine, shows a real-time progress bar and per-test status labels,
+Runs model inference, config and CLI validation in that order, showing each
+completed result immediately, then renders actionable diagnostic suggestions.
 then renders results with actionable diagnostic suggestion boxes for failures.
 Preserves the 8-bit pixel theme.
 """
@@ -19,10 +19,9 @@ from core.validation_result import ValidationReport, ValidationResult, Status, f
 
 # Test display order and labels
 _TESTS = [
-    ('endpoint', '🔌 API Endpoint'),
     ('model', '🤖 模型推理'),
-    ('cli', '💻 OpenCode CLI'),
     ('config', '📄 配置文件'),
+    ('cli', '💻 OpenCode CLI'),
 ]
 
 
@@ -108,6 +107,14 @@ class VerifyPage(BasePage):
                     pass  # leave pending ones gray
         self.after(0, update)
 
+    def _on_validation_result(self, name: str, result: ValidationResult, value: float):
+        """Refresh the matching row only after that real check completes."""
+        def update():
+            self._mark_status(name, result.status)
+            self._progress['value'] = value * 100
+            self._progress_label.configure(text=f'✓ 已完成 {name} · {int(value * 100)}%')
+        self.after(0, update)
+
     def _mark_status(self, name: str, status: Status):
         """Update a test's status label with the appropriate icon/color."""
         def update():
@@ -132,6 +139,7 @@ class VerifyPage(BasePage):
             try:
                 engine = ValidationEngine(self.app.state)
                 engine.on_progress = self._update_progress
+                engine.on_result = self._on_validation_result
                 report = engine.run_all()
             except Exception as e:
                 # Build a minimal failed report if the engine itself crashes

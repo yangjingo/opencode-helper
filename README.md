@@ -1,8 +1,8 @@
 # 🎮 OpenCode Helper
 
-> 像素风格 · 一键安装 · 内网模型配置 · Claude Code 迁移
+> 一键安装 · 模型配置 · Claude Code 迁移 · 真实验证
 
-一个 **Windows GUI 桌面工具**，让你 5 分钟内完成 OpenCode 的安装、内网模型配置、代理绕行和 Claude Code 配置迁移。零门槛，零手动编辑。
+一个桌面助手，让你 5 分钟内完成 OpenCode 的安装、模型配置、代理绕行和 Claude Code 配置迁移。零门槛，零手动编辑。
 
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%2B-blue)
 ![Python](https://img.shields.io/badge/python-3.10%2B-green)
@@ -11,24 +11,18 @@
 
 ---
 
-## 截图
+## 一张图看懂
 
-```
-╔══════════════════════════════════════════════════╗
-║  ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓  ║
-║  ▓  ╔══════════════════════════════════════╗  ▓  ║
-║  ▓  ║    🎮 OpenCode Helper v1.0          ║  ▓  ║
-║  ▓  ║    ─────────────────────────────    ║  ▓  ║
-║  ▓  ║  一键安装 OpenCode                  ║  ▓  ║
-║  ▓  ║  配置内网模型，5 分钟搞定           ║  ▓  ║
-║  ▓  ║                                    ║  ▓  ║
-║  ▓  ║     [ 开始安装 → ]                 ║  ▓  ║
-║  ▓  ╚══════════════════════════════════════╝  ▓  ║
-║  ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓  ▓  ║
-╚══════════════════════════════════════════════════╝
-```
+![OpenCode Helper：海报、流程演示与真实 EXE 录屏](docs/assets/opencode-helper-showcase.gif)
 
----
+> 左侧为功能海报；右上为流程演示；右下为真实打包 EXE 的运行录屏。
+
+**OpenCode Helper 帮你解决什么问题？**
+
+- Node、npm、OpenCode 或国内镜像配置缺失：自动检测，并提供一键安装/修复。
+- Claude Code 已能用但 OpenCode 不可用：迁移 Key、Base URL、模型与 Skills，保留原始地址。
+- 模型配置容易填错：识别 GLM、Qwen、DeepSeek、Kimi、MiniMax、MiMo、LongCat、千帆及本地 vLLM 的接口协议。
+- 不知道接口到底通不通：真实访问官方端点；伪 Key 返回 `401/403` 也会明确标记为“端点可达”。
 
 ## 功能
 
@@ -37,9 +31,9 @@
 - 📦 **双模式安装** — npm 全局安装 / .exe 独立安装包
 - ⚙ **模型配置** — 表单填写 + 预设模板，零出错
 - 🛡 **代理处理** — 自动检测上游代理，生成 launcher 脚本，内网直连
-- 🔄 **Claude Code 迁移** — API Key、Instructions、Skills 一键迁移
+- 🔄 **Claude Code 迁移** — 按用户 / 项目 / 本地配置优先级识别 API Key、Base URL、真实模型、Instructions、Skills
 - ✅ **验证测试** — 安装后自动测试 API 端点和模型推理
-- 🎨 **像素风格** — 霓虹绿黑配色，像素进度条，庆祝撒花动画
+- 🎨 **清晰引导** — 进度、命令与验证结果始终可见
 - 🌐 **中英双语** — 默认中文，自动检测系统语言
 
 ---
@@ -133,6 +127,31 @@ opencode-helper/
   }]
 }
 ```
+
+---
+
+## Claude Code 与厂商配置迁移
+
+完整的国内厂商端点、协议和迁移规则见 [国内模型与 OpenCode 配置指南](docs/china-provider-guide.md)。
+
+迁移会读取 Claude Code 官方支持的 `~/.claude/settings.json`、项目
+`.claude/settings.json` 和 `.claude/settings.local.json`，后者优先级最高；运行时环境变量优先于文件配置。`sonnet`、`opus` 等 Claude 别名不会被误当成模型 ID。
+
+生成 OpenCode 配置时会保留原始 Base URL，并按接口协议选择适配器：国内厂商的 Anthropic Messages 兼容接口使用 `@ai-sdk/anthropic`，Chat Completions 兼容接口使用 `@ai-sdk/openai-compatible`。内置识别并支持 DeepSeek、阿里百炼 / Qwen、智谱 GLM、Moonshot / Kimi、MiniMax、小米 MiMo、LongCat、百度千帆和自建内网网关；不再提供海外模型厂商的专用预设或自动识别。
+
+| 厂商 | 建议 Base URL | 接口类型 |
+| --- | --- | --- |
+| DeepSeek | `https://api.deepseek.com/v1` | Chat Completions |
+| 阿里百炼 / Qwen Coding Plan | `https://coding.dashscope.aliyuncs.com/apps/anthropic/v1` | Anthropic Messages |
+| 智谱 GLM | `https://open.bigmodel.cn/api/anthropic/v1` | Anthropic Messages |
+| Moonshot / Kimi | `https://api.moonshot.cn/v1` | Chat Completions |
+| MiniMax（中国区） | `https://api.minimaxi.com/v1` | Chat Completions |
+| 小米 MiMo | `https://api.xiaomimimo.com/v1` | Chat Completions |
+| LongCat | `https://api.longcat.chat/openai/v1` | Chat Completions |
+
+如厂商后台提供的地址不同，以后台实际地址为准；工具会保留你填写或从 Claude Code 检测到的地址，而不再强制替换。
+
+项目内 `.claude/skills/<name>/SKILL.md` 已被 OpenCode 原生发现，不会重复复制；全局 Claude skills 会复制到 OpenCode 的全局 skills 目录。
 
 ---
 

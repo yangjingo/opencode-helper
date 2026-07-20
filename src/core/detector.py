@@ -14,6 +14,13 @@ _S = 3  # default subprocess timeout (reduced from 5s for faster fail)
 
 _cache: dict = {}
 
+
+def hidden_process_kwargs() -> dict:
+    """Prevent console windows from flashing while the GUI probes commands."""
+    if os.name == 'nt':
+        return {'creationflags': getattr(subprocess, 'CREATE_NO_WINDOW', 0)}
+    return {}
+
 def clear_cache():
     """Clear all cached detection results (call before re-detect)."""
     _cache.clear()
@@ -24,7 +31,8 @@ def clear_cache():
 @lru_cache(maxsize=1)
 def get_os_version() -> str:
     try:
-        result = subprocess.run(['cmd', '/c', 'ver'], capture_output=True, text=True, timeout=_S)
+        result = subprocess.run(['cmd', '/c', 'ver'], capture_output=True, text=True,
+                                errors='replace', timeout=_S, **hidden_process_kwargs())
         return result.stdout.strip()
     except Exception:
         return 'Unknown'
@@ -35,23 +43,127 @@ def _try_cmd(cmd: list, timeout: int = _S) -> tuple[str, bool]:
     Tries in order:
     1. Direct call — current process PATH
     2. cmd /c — system-wide PATH
-    3. powershell -Command — loads user profile (nvm/fnm live here)
-    4. powershell -NoProfile — clean PS (fastest, no profile overhead)
+    3. clean PowerShell — never loads the user's profile or opens a window
+
+    fnm/nvm are discovered from their on-disk version stores, so loading a
+    PowerShell profile is both unnecessary and a source of console popups.
     """
     attempts = [
         cmd,
         ['cmd', '/c'] + cmd,
-        ['powershell', '-Command'] + cmd,
-        ['powershell', '-NoProfile', '-Command'] + cmd,
+        ['powershell', '-NoProfile', '-Command', subprocess.list2cmdline(cmd)],
     ]
     for attempt in attempts:
         try:
-            r = subprocess.run(attempt, capture_output=True, text=True, timeout=timeout)
+            # Windows tools can emit a codepage different from Python's active
+            # console codec.  Replacement keeps background detection reliable.
+            r = subprocess.run(attempt, capture_output=True, text=True,
+                               errors='replace', timeout=timeout, **hidden_process_kwargs())
             if r.returncode == 0 and r.stdout.strip():
                 return r.stdout.strip(), True
         except Exception:
             continue
     return '', False
+
+
+def _paths_from_where(command: str) -> list[str]:
+    """Return executable paths known to ``where.exe`` without raising.
+
+    A desktop application is commonly launched by Explorer, whose PATH does
+    not contain the shell-only PATH changes made by fnm/nvm.  ``where`` is a
+    useful extra source, but it is deliberately not our only source.
+    """
+    try:
+        result = subprocess.run(['where.exe', command], capture_output=True, text=True,
+                                errors='replace', timeout=_S, **hidden_process_kwargs())
+        if result.returncode == 0:
+            return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    except Exception:
+        pass
+    return []
+
+
+def _node_candidates() -> list[str]:
+    """Find Node installations including fnm/nvm/Scoop installations.
+
+    This must not rely solely on PATH: fnm puts the active Node version in a
+    per-shell ``fnm_multishells`` directory, which is absent when the helper
+    EXE is started from the Windows desktop.
+    """
+    candidates = [shutil.which('node') or ''] + _paths_from_where('node')
+    home = Path.home()
+    local_app_data = Path(os.environ.get('LOCALAPPDATA', home / 'AppData' / 'Local'))
+    app_data = Path(os.environ.get('APPDATA', home / 'AppData' / 'Roaming'))
+    program_files = [Path(value) for value in (
+        os.environ.get('ProgramFiles', ''), os.environ.get('ProgramFiles(x86)', '')
+    ) if value]
+
+    # Standard installer, nvm-windows, Scoop, and fnm's durable version store.
+    candidates.extend(str(base / 'nodejs' / 'node.exe') for base in program_files)
+    candidates.extend([
+        str(home / 'scoop' / 'apps' / 'nodejs' / 'current' / 'node.exe'),
+        str(home / 'scoop' / 'apps' / 'nodejs-lts' / 'current' / 'node.exe'),
+    ])
+    scan_patterns = [
+        # fnm_multishells is intentionally excluded: it can contain thousands
+        # of stale junctions.  The durable fnm node-versions store below is
+        # where those links point, and is safe to scan.
+        (home / 'scoop' / 'persist' / 'fnm' / 'node-versions', '*/installation/node.exe'),
+        (app_data / 'fnm' / 'node-versions', '*/installation/node.exe'),
+        (app_data / 'nvm', '*/node.exe'),
+    ]
+    for root, pattern in scan_patterns:
+        try:
+            if root.exists():
+                candidates.extend(str(path) for path in root.glob(pattern))
+        except OSError:
+            continue
+
+    # Preserve order (PATH's active version first), while ignoring stale paths.
+    unique, seen = [], set()
+    for candidate in candidates:
+        normalized = os.path.normcase(os.path.abspath(candidate)) if candidate else ''
+        # A fnm per-shell directory disappears after its creating shell exits.
+        # Never report it to the GUI as a durable runtime, even if it happens
+        # to exist while detection is running.
+        is_ephemeral_fnm = 'fnm_multishells' in normalized
+        if normalized and not is_ephemeral_fnm and normalized not in seen and Path(candidate).is_file():
+            unique.append(candidate)
+            seen.add(normalized)
+    return unique
+
+
+def _npm_candidates(node_path: str = '') -> list[str]:
+    """Find npm.cmd, preferring the npm paired with the detected Node binary."""
+    candidates = [shutil.which('npm') or ''] + _paths_from_where('npm')
+    if node_path:
+        node_dir = Path(node_path).parent
+        candidates.extend([str(node_dir / 'npm.cmd'), str(node_dir / 'npm')])
+    for node in _node_candidates():
+        node_dir = Path(node).parent
+        candidates.extend([str(node_dir / 'npm.cmd'), str(node_dir / 'npm')])
+
+    unique, seen = [], set()
+    for candidate in candidates:
+        normalized = os.path.normcase(os.path.abspath(candidate)) if candidate else ''
+        is_ephemeral_fnm = 'fnm_multishells' in normalized
+        if normalized and not is_ephemeral_fnm and normalized not in seen and Path(candidate).is_file():
+            unique.append(candidate)
+            seen.add(normalized)
+    return unique
+
+
+def _try_executables(executables: list[str], args: list[str], timeout: int = _S) -> tuple[str, bool, str]:
+    """Run known executable files, returning its output and successful path."""
+    for executable in executables:
+        try:
+            result = subprocess.run([executable] + args, capture_output=True, text=True,
+                                    errors='replace', timeout=timeout, **hidden_process_kwargs())
+            if result.returncode == 0 and result.stdout.strip():
+                return result.stdout.strip(), True, executable
+        except Exception:
+            continue
+    return '', False, ''
 
 def _mask_key(key: str) -> str:
     if not key or len(key) <= 8:
@@ -66,8 +178,10 @@ def detect_os() -> dict:
     return {'os_name': 'Windows' if _SYSTEM == 'win32' else _SYSTEM, 'os_version': ver, 'os_ok': ok}
 
 def detect_node() -> dict:
-    out, ok = _try_cmd(['node', '--version'])
-    node_path = shutil.which('node') or ''
+    out, ok, node_path = _try_executables(_node_candidates(), ['--version'])
+    if not ok:
+        out, ok = _try_cmd(['node', '--version'])
+        node_path = shutil.which('node') or ''
     if ok and out:
         v = out.lstrip('v')
         major = int(v.split('.')[0]) if v else 0
@@ -75,19 +189,31 @@ def detect_node() -> dict:
     return {'node_installed': False, 'node_version': '', 'node_path': node_path, 'node_ok': False}
 
 def detect_npm() -> dict:
-    out, ok = _try_cmd(['npm', '--version'])
-    npm_path = shutil.which('npm') or ''
+    node_path = detect_node().get('node_path', '')
+    out, ok, npm_path = _try_executables(_npm_candidates(node_path), ['--version'])
+    if not ok:
+        out, ok = _try_cmd(['npm', '--version'])
+        npm_path = shutil.which('npm') or ''
     if ok and out:
         major = int(out.split('.')[0]) if out else 0
         return {'npm_installed': True, 'npm_version': out, 'npm_path': npm_path, 'npm_ok': major >= 9}
     return {'npm_installed': False, 'npm_version': '', 'npm_path': npm_path, 'npm_ok': False}
 
 def detect_opencode() -> dict:
-    exe_path = shutil.which('opencode') or ''
-    if exe_path:
-        # Try to get version
-        ver_out, ver_ok = _try_cmd(['opencode', '--version'], timeout=5)
-        return {'opencode_installed': True, 'opencode_version': ver_out if ver_ok else '', 'opencode_path': exe_path}
+    # Prefer the shim paired with the verified npm runtime.  ``shutil.which``
+    # can otherwise return fnm_multishells\...\opencode.cmd, a stale shell
+    # junction that is unusable from the desktop GUI.
+    npm_path = detect_npm().get('npm_path', '')
+    paired_cli = str(Path(npm_path).parent / 'opencode.cmd') if npm_path else ''
+    path_cli = shutil.which('opencode') or ''
+    candidates = [paired_cli, path_cli]
+    for exe_path in candidates:
+        normalized = os.path.normcase(os.path.abspath(exe_path)) if exe_path else ''
+        if not exe_path or 'fnm_multishells' in normalized or not Path(exe_path).is_file():
+            continue
+        ver_out, ver_ok, verified_path = _try_executables([exe_path], ['--version'], timeout=5)
+        if ver_ok:
+            return {'opencode_installed': True, 'opencode_version': ver_out, 'opencode_path': verified_path}
     # Check npm global
     out, ok = _try_cmd(['npm', 'list', '-g', 'opencode-ai', '--depth=0'], timeout=3)
     if ok and 'opencode-ai@' in out:
@@ -135,7 +261,8 @@ def _detect_winhttp_proxy() -> dict:
     """Detect WinHTTP system proxy via netsh command."""
     try:
         r = subprocess.run(['netsh', 'winhttp', 'show', 'proxy'],
-                          capture_output=True, text=True, timeout=5)
+                          capture_output=True, text=True, errors='replace', timeout=5,
+                          **hidden_process_kwargs())
         output = r.stdout
         direct = '直接访问' in output or 'Direct access' in output.lower()
         proxy_line = ''
@@ -221,41 +348,15 @@ def detect_claude_env_vars() -> dict:
     return {'claude_env_vars': env_vars}
 
 def detect_claude_config() -> dict:
-    home = Path.home()
-    settings_path = home / '.claude' / 'settings.json'
+    # Keep the legacy UI shape, but discover every documented Claude settings
+    # scope (user, project and settings.local.json) via the migration engine.
+    from core.cc_migrator import settings_sources
+    home, cwd = Path.home(), Path.cwd()
+    sources = settings_sources(home, cwd)
+    user, project, local = sources
+    settings_path = user['path']
+    project_claude = cwd / '.claude'
     skills_path = home / '.claude' / 'skills'
-    project_claude = Path.cwd() / '.claude'
-
-    # Read user-level settings
-    settings_content = {}
-    settings_raw = ''
-    settings_readable = False
-    if settings_path.exists():
-        try:
-            settings_raw = settings_path.read_text(encoding='utf-8')
-            settings_content = json.loads(settings_raw)
-            settings_readable = True
-        except json.JSONDecodeError:
-            settings_readable = False
-        except Exception:
-            settings_readable = False
-
-    # Read project-level settings
-    project_settings_path = project_claude / 'settings.json'
-    project_content = {}
-    project_raw = ''
-    project_readable = False
-    if project_settings_path.exists():
-        try:
-            project_raw = project_settings_path.read_text(encoding='utf-8')
-            project_content = json.loads(project_raw)
-            project_readable = True
-        except json.JSONDecodeError:
-            project_readable = False
-        except Exception:
-            pass
-
-    # Scan project .claude for more config files
     project_files = []
     if project_claude.exists():
         for f in project_claude.iterdir():
@@ -263,16 +364,22 @@ def detect_claude_config() -> dict:
                 project_files.append({'name': f.name, 'path': str(f)})
 
     return {
-        'claude_config_found': settings_path.exists() or skills_path.exists() or project_claude.exists(),
+        'claude_config_found': any(source['exists'] for source in sources) or skills_path.exists() or project_claude.exists(),
         'claude_settings_path': str(settings_path) if settings_path.exists() else '',
         'claude_skills_path': str(skills_path) if skills_path.exists() else '',
         'project_claude_path': str(project_claude) if project_claude.exists() else '',
-        'claude_settings': settings_content,
-        'claude_settings_raw': settings_raw,
-        'claude_settings_readable': settings_readable,
-        'project_settings': project_content,
-        'project_settings_raw': project_raw,
-        'project_settings_readable': project_readable,
+        'claude_settings': user['settings'],
+        'claude_settings_raw': user['raw'],
+        'claude_settings_readable': user['readable'],
+        'project_settings': project['settings'],
+        'project_settings_raw': project['raw'],
+        'project_settings_readable': project['readable'],
+        'local_settings_path': str(local['path']) if local['exists'] else '',
+        'local_settings': local['settings'],
+        'local_settings_raw': local['raw'],
+        'local_settings_readable': local['readable'],
+        'settings_sources': [{'scope': source['scope'], 'path': str(source['path']),
+                              'exists': source['exists'], 'readable': source['readable']} for source in sources],
         'project_files': project_files,
     }
 

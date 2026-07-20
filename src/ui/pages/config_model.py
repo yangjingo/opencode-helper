@@ -1,9 +1,11 @@
 """Model configuration form page — auto-detects env vars + settings.json + dynamic presets."""
+import os
 import tkinter as tk
 from ui.theme import COLORS, FONTS
 from ui.widgets import PixelButton, PixelEntry, PixelToggle, BasePage
 from i18n import t
-from core.detector import detect_claude_env_vars, detect_claude_config
+from core.cc_migrator import extract_profile
+from core.provider_catalog import resolve_provider
 
 # No hardcoded presets — only what the user actually has
 
@@ -14,86 +16,23 @@ class ConfigModelPage(BasePage):
         s = app.state
         app.set_key_hint('[Enter]下一步  [Esc]返回  [T]测试连接')
 
-        # ── Auto-detect from 3 sources ──
-        # 1. Environment variables (HIGHEST)
-        claude_env = detect_claude_env_vars().get('claude_env_vars', {})
-        env_api_key = (claude_env.get('ANTHROPIC_API_KEY', '')
-                       or claude_env.get('CLAUDE_CODE_API_KEY', '')
-                       or claude_env.get('ANTHROPIC_AUTH_TOKEN', ''))
-        env_base_url = claude_env.get('ANTHROPIC_BASE_URL', '')
-        env_model = (claude_env.get('ANTHROPIC_MODEL', '')
-                     or claude_env.get('ANTHROPIC_DEFAULT_SONNET_MODEL', '')
-                     or claude_env.get('ANTHROPIC_DEFAULT_OPUS_MODEL', ''))
-
-        if env_api_key:
-            s.api_key = env_api_key
-        if env_base_url:
-            s.base_url = env_base_url
-        if env_model:
-            s.model_id = env_model
-
-        # 2. ~/.claude/settings.json + project settings
-        cc = detect_claude_config()
-        for settings_src in [cc.get('claude_settings', {}), cc.get('project_settings', {})]:
-            if not settings_src:
-                continue
-            # Top-level keys (fallback only — env object wins below)
-            if not s.api_key and 'apiKey' in settings_src:
-                s.api_key = settings_src['apiKey']
-            if not s.base_url and 'baseURL' in settings_src:
-                s.base_url = settings_src['baseURL']
-
-            # Nested env object — this IS the real config, overwrites top-level
-            nested_env = settings_src.get('env', {})
-            if isinstance(nested_env, dict):
-                env_key = (nested_env.get('ANTHROPIC_API_KEY', '')
-                           or nested_env.get('ANTHROPIC_AUTH_TOKEN', '')
-                           or nested_env.get('CLAUDE_CODE_API_KEY', ''))
-                env_url = nested_env.get('ANTHROPIC_BASE_URL', '')
-                env_model = (nested_env.get('ANTHROPIC_DEFAULT_SONNET_MODEL', '')
-                             or nested_env.get('ANTHROPIC_DEFAULT_OPUS_MODEL', '')
-                             or nested_env.get('ANTHROPIC_MODEL', ''))
-                if env_key:
-                    s.api_key = env_key
-                if env_url:
-                    s.base_url = env_url
-                if env_model:
-                    s.model_id = env_model  # overwrites top-level 'model'!
-
-        # Derive provider_name from base_url if still empty
-        # Order matters: bigmodel/glm must precede anthropic, since GLM's
-        # Anthropic-compatible URL (open.bigmodel.cn/api/anthropic) contains
-        # the substring 'anthropic'.
-        if not s.provider_name and s.base_url:
-            for hint in ['bigmodel', 'glm', 'zhipu', 'dashscope', 'alibaba',
-                         'aliyun', 'qwen', 'deepseek', 'openlab', 'openai',
-                         'anthropic']:
-                if hint in s.base_url.lower():
-                    s.provider_name = hint
-                    break
-        if not s.provider_name:
-            s.provider_name = 'custom'
-
-        # Auto-convert known provider base URLs (全部 Anthropic 兼容接口)
-        _KNOWN_PROVIDERS = {
-            # DeepSeek 官方 Anthropic 兼容接口
-            'deepseek':  'https://api.deepseek.com/anthropic',
-            # 智谱 GLM 的 Anthropic 兼容 endpoint（供 Claude / OpenCode 使用）
-            'bigmodel':  'https://open.bigmodel.cn/api/anthropic',
-            'glm':       'https://open.bigmodel.cn/api/anthropic',
-            'zhipu':     'https://open.bigmodel.cn/api/anthropic',
-            'openai':    'https://api.openai.com/v1',
-            'anthropic': 'https://api.anthropic.com/v1',
-            # 阿里百炼 Coding Plan 专属 endpoint
-            'dashscope': 'https://coding.dashscope.aliyuncs.com/apps/anthropic/v1',
-            'alibaba':   'https://coding.dashscope.aliyuncs.com/apps/anthropic/v1',
-            'aliyun':    'https://coding.dashscope.aliyuncs.com/apps/anthropic/v1',
-            'qwen':      'https://coding.dashscope.aliyuncs.com/apps/anthropic/v1',
-        }
-        for key, target in _KNOWN_PROVIDERS.items():
-            if key in s.base_url.lower() and s.base_url.rstrip('/') != target.rstrip('/'):
-                s.base_url = target
-                break
+        # Read all documented Claude settings layers once.  Do not rewrite its
+        # endpoint: a gateway URL is user intent and the config generator picks
+        # the required OpenCode adapter from its actual API shape.
+        profile = extract_profile(runtime_env=os.environ)
+        if profile['api_key']:
+            s.api_key = profile['api_key']
+        if profile['base_url']:
+            s.base_url = profile['base_url']
+            s.api_style = profile['api_style']
+        self._imported_base_url = s.base_url
+        if profile['model_id']:
+            s.model_id = profile['model_id']
+        spec = resolve_provider(s.base_url, s.provider_name, s.api_style)
+        if not s.provider_name or s.provider_name == 'custom':
+            s.provider_name = spec.provider_id
+        if not s.display_name:
+            s.display_name = spec.display_name
 
         # ── Build preset list: detected model + Custom template ──
         presets = []
@@ -167,12 +106,14 @@ class ConfigModelPage(BasePage):
                      bg=COLORS['dark_gray'], fg=COLORS['neon_green'],
                      font=(FONTS['log']['family'], FONTS['log']['size'])).pack(padx=8, pady=(3, 0))
             if s.base_url:
-                tk.Label(hint, text=f'⚠ Base URL 已自动转换: {s.base_url} ，请确认是否正确',
+                tk.Label(hint, text=f'✓ 已保留 Claude Code Base URL: {s.base_url}',
                          bg=COLORS['dark_gray'], fg=COLORS['yellow'],
                          font=(FONTS['small']['family'], FONTS['small']['size'])).pack(padx=8, pady=(0, 3))
 
         # Form fields — use detected values, or empty (placeholders shown if Custom)
-        has_detected = bool(detected_name)
+        # An endpoint/key without a model is still useful input; keep it visible
+        # instead of clearing the form just because Claude used an alias.
+        has_detected = bool(s.api_key or s.base_url or detected_name)
         fields = [
             ('Provider Name:', 'provider_name', s.provider_name if has_detected else '', False),
             ('Display Name:', 'display_name', s.display_name if has_detected else '', False),
@@ -270,24 +211,20 @@ class ConfigModelPage(BasePage):
         s.display_name = _val('display_name')
         s.api_key = _val('api_key')
         s.base_url = _val('base_url')
+        # A manual URL edit should be inferred again; only a value imported
+        # from ANTHROPIC_BASE_URL carries the explicit protocol marker.
+        if s.base_url != self._imported_base_url:
+            s.api_style = ''
         s.model_id = _val('model_id')
         s.model_name = _val('model_name')
         s.reasoning = self.reasoning_var.get()
         s.thinking = self.thinking_var.get()
 
-        # provider_name is required — derive from base_url if empty
-        # bigmodel/glm precede anthropic — GLM's URL contains 'anthropic'.
-        if not s.provider_name and s.base_url:
-            for hint in ['bigmodel', 'glm', 'zhipu', 'dashscope', 'alibaba',
-                         'aliyun', 'qwen', 'deepseek', 'openlab', 'openai',
-                         'anthropic']:
-                if hint in s.base_url.lower():
-                    s.provider_name = hint
-                    break
+        spec = resolve_provider(s.base_url, s.provider_name, s.api_style)
         if not s.provider_name:
-            s.provider_name = 'custom'
+            s.provider_name = spec.provider_id
         if not s.display_name:
-            s.display_name = s.provider_name
+            s.display_name = spec.display_name
 
     def _on_preview(self):
         """Show the generated JSONC in a terminal block with copy button."""

@@ -1,0 +1,54 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "//": "中国官方端点全量示例。通过环境变量注入 Key，勿在此文件填写真实凭据。",
+  "provider": {
+    "deepseek": {
+      "name": "DeepSeek",
+      "options": { "apiKey": "{env:DEEPSEEK_API_KEY}", "baseURL": "https://api.deepseek.com/v1" },
+      "models": { "deepseek-v4-flash": { "name": "DeepSeek V4 Flash" } }
+    },
+    "dashscope": {
+      "name": "阿里百炼 Coding Plan",
+      "npm": "@ai-sdk/anthropic",
+      "options": { "apiKey": "{env:DASHSCOPE_API_KEY}", "baseURL": "https://coding.dashscope.aliyuncs.com/apps/anthropic/v1" },
+      "models": { "qwen3.7-plus": { "name": "Qwen 3.7 Plus" } }
+    },
+    "zhipuai": {
+      "name": "智谱 GLM Coding Plan",
+      "api": "https://open.bigmodel.cn/api/coding/paas/v4",
+      "options": { "apiKey": "{env:GLM_API_KEY}" },
+      "models": { "glm-5.2": { "name": "GLM 5.2", "reasoning": true } }
+    },
+    "moonshot": {
+      "name": "Moonshot / Kimi",
+      "options": { "apiKey": "{env:MOONSHOT_API_KEY}", "baseURL": "https://api.moonshot.cn/v1" },
+      "models": { "moonshot-v1-8k": { "name": "Moonshot v1 8K" } }
+    },
+    "minimax": {
+      "name": "MiniMax 中国区（普通 OpenAI 兼容 API）",
+      "npm": "@ai-sdk/openai-compatible",
+      "options": { "apiKey": "{env:MINIMAX_API_KEY}", "baseURL": "https://api.minimaxi.com/v1" },
+      "models": { "MiniMax-M2.7": { "name": "MiniMax M2.7", "reasoning": true } }
+    },
+    "mimo": {
+      "name": "小米 MiMo",
+      "npm": "@ai-sdk/openai-compatible",
+      "options": { "apiKey": "{env:MIMO_API_KEY}", "baseURL": "https://api.xiaomimimo.com/v1" },
+      "models": { "mimo-v2.5-pro": { "name": "MiMo v2.5 Pro", "reasoning": true } }
+    },
+    "longcat": {
+      "name": "LongCat",
+      "npm": "@ai-sdk/openai-compatible",
+      "options": { "apiKey": "{env:LONGCAT_API_KEY}", "baseURL": "https://api.longcat.chat/openai/v1" },
+      "models": { "LongCat-2.0": { "name": "LongCat 2.0", "reasoning": true } }
+    },
+    "qianfan": {
+      "name": "百度千帆",
+      "npm": "@ai-sdk/openai-compatible",
+      "options": { "apiKey": "{env:QIANFAN_API_KEY}", "baseURL": "https://qianfan.baidubce.com/v2" },
+      "models": { "ernie-4.5-turbo-128k": { "name": "ERNIE 4.5 Turbo 128K" } }
+    }
+  },
+  "model": "zhipuai/glm-5.2",
+  "autoupdate": false
+}

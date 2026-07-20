@@ -48,35 +48,35 @@ class FakeState:
 # TEST GROUP 1: Engine + real validators integration (full conversion path)
 # ════════════════════════════════════════════════════════════════════════════
 
-def test_engine_full_success_path():
-    """Engine runs all 4 tests, converts results, produces SUCCESS report."""
+def test_engine_full_success_path(tmp_path):
+    """Engine runs model, config and CLI checks in the user-visible order."""
     state = FakeState()
     progress_log = []
 
+    config_path = tmp_path / '.config' / 'opencode' / 'opencode.jsonc'
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        '{"provider":{"dashscope":{"models":{"qwen3.7-plus":{}}}},"model":"dashscope/qwen3.7-plus"}',
+        encoding='utf-8')
+
     with patch('core.validator.requests.post') as mock_post, \
-         patch('core.validator.shutil.which', return_value='/usr/bin/opencode'), \
+         patch('core.validator.detect_opencode', return_value={'opencode_path': 'opencode'}), \
+         patch('core.validator.os.path.isfile', return_value=True), \
          patch('core.validator.subprocess.Popen') as mock_popen, \
-         patch('core.validator.Path.home') as mock_home, \
-         patch('core.validator.Path.exists', return_value=True):
-        # endpoint + model succeed (direct_post strategy)
+         patch('core.validator.Path.home', return_value=tmp_path):
+        # model inference succeeds (direct_post strategy)
         mock_post.return_value = mock_response(200, {'content': [{'text': 'hi'}]}, 'hi')
         # CLI succeeds
         proc = MagicMock()
         proc.returncode = 0
         proc.communicate.return_value = ('hello', '')
         mock_popen.return_value = proc
-        # config exists
-        mock_home.return_value = MagicMock()
-        mock_home.return_value.__truediv__ = MagicMock(return_value=MagicMock(
-            exists=MagicMock(return_value=True),
-            read_text=MagicMock(return_value='{"provider": {}}')))
-
         engine = ValidationEngine(state)
         engine.on_progress = lambda n, v: progress_log.append((n, v))
         report = engine.run_all()
 
     assert report.overall_status == Status.SUCCESS, f'expected SUCCESS got {report.overall_status}'
-    assert len(report.results) == 4
+    assert [result.name for result in report.results] == ['model', 'config', 'cli']
     assert len(report.get_failed()) == 0
     # Progress should reach 1.0
     assert progress_log[-1][1] == 1.0, f'final progress {progress_log[-1]}'
@@ -85,10 +85,11 @@ def test_engine_full_success_path():
 
 
 def test_engine_partial_failure_produces_warning():
-    """If config fails but endpoint/model/cli succeed -> WARNING."""
+    """If config fails after model inference, the overall report fails."""
     state = FakeState()
     with patch('core.validator.requests.post') as mock_post, \
-         patch('core.validator.shutil.which', return_value='/usr/bin/opencode'), \
+         patch('core.validator.detect_opencode', return_value={'opencode_path': 'opencode'}), \
+         patch('core.validator.os.path.isfile', return_value=True), \
          patch('core.validator.subprocess.Popen') as mock_popen, \
          patch('core.validator.Path.exists', return_value=False):
         mock_post.return_value = mock_response(200, {'content': [{'text': 'hi'}]})
@@ -212,6 +213,32 @@ def test_retry_on_5xx_then_success():
     print('  PASS: retried 5xx -> eventually SUCCESS (3 attempts)')
 
 
+def test_retry_on_429_then_success():
+    """Rate limiting is transient and must use the configured backoff retry."""
+    cfg = {'test_strategy': 'openai_compatible', 'timeout': (1, 2),
+           'retry': {'times': 2, 'backoff': 0}, 'headers': {}}
+    with patch('core.validator.requests.post') as mock_post:
+        mock_post.side_effect = [
+            mock_response(429, {'error': {'message': 'rate limited'}}, 'rate limited'),
+            mock_response(200, {'choices': [{'message': {'content': 'ok'}}]}),
+        ]
+        result = test_model('https://api.example.com/v1', 'key', 'model', cfg)
+    assert result.status == Status.SUCCESS
+    assert mock_post.call_count == 2
+
+
+def test_openai_reasoning_content_counts_as_model_output():
+    cfg = {'test_strategy': 'openai_compatible', 'timeout': (1, 2),
+           'retry': {'times': 1}, 'headers': {}}
+    with patch('core.validator.requests.post') as mock_post:
+        mock_post.return_value = mock_response(200, {
+            'choices': [{'message': {'content': '', 'reasoning_content': 'thinking'}}],
+        })
+        result = test_model('https://api.example.com/v1', 'key', 'model', cfg)
+    assert result.status == Status.SUCCESS
+    assert 'thinking' in result.message
+
+
 def test_no_retry_on_4xx():
     """401 should NOT be retried (won't fix itself) — fast fail."""
     cfg = {'test_strategy': 'direct_post', 'timeout': (5, 15),
@@ -282,7 +309,7 @@ def test_provider_detection_matrix():
         ('https://api.deepseek.com/anthropic', 'anthropic_compatible'),
         ('https://api.openai.com/v1', 'openai_compatible'),
         ('https://api.anthropic.com', 'anthropic_compatible'),
-        ('https://unknown-provider.com/v1', 'anthropic_compatible'),  # default
+        ('https://unknown-provider.com/v1', 'openai_compatible'),  # generic /v1 default
     ]
     for url, expected_strategy in cases:
         cfg = get_provider_config(url)

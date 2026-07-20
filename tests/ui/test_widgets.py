@@ -1,8 +1,12 @@
 import sys, os, tkinter as tk
+import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'src'))
 
 def setup_root():
-    root = tk.Tk()
+    try:
+        root = tk.Tk()
+    except tk.TclError:
+        pytest.skip('Tkinter runtime is unavailable')
     root.withdraw()
     return root
 
@@ -73,3 +77,10 @@ def test_pixel_terminal_write_and_clear():
     term.write("Hello World", "info")
     term.clear()
     root.destroy()
+
+def test_terminal_marks_background_commands_for_highlighting():
+    from ui.widgets import terminal_message_tag
+    assert terminal_message_tag('$ npm install -g opencode-ai') == 'command'
+    assert terminal_message_tag('[PowerShell] $ npm config set registry https://registry.npmmirror.com') == 'command'
+    assert terminal_message_tag('added 1 package') == 'info'
+    assert terminal_message_tag('$ npm install', 'error') == 'error'

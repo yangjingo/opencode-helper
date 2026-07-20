@@ -1,13 +1,17 @@
 """Claude Code configuration migration page — full settings.json display + migration toggles."""
+import os
 import tkinter as tk, json
 from ui.theme import COLORS, FONTS
 from ui.widgets import PixelButton, PixelToggle, BasePage, ScrollableFrame
 from i18n import t
 from core import cc_migrator
 from core.detector import detect_claude_env_vars, detect_claude_config, _mask_key
+from core.cc_migrator import extract_profile
+from core.provider_catalog import resolve_provider
 
-KEY_ICONS = {'api_key': '🔑', 'model': '🤖', 'instructions': '📋', 'skills': '🛠'}
-KEY_LABELS = {'api_key': 'API Key', 'model': 'Default Model', 'instructions': 'Instructions', 'skills': 'Skill'}
+KEY_ICONS = {'api_key': '🔑', 'model': '🤖', 'mcp': '🔌', 'instructions': '📋', 'skills': '🛠'}
+KEY_LABELS = {'api_key': 'API Key', 'model': 'Default Model', 'mcp': 'MCP Servers',
+              'instructions': 'Instructions', 'skills': 'Skill'}
 
 class MigrationPage(BasePage):
     def __init__(self, parent, app):
@@ -119,14 +123,17 @@ class MigrationPage(BasePage):
             formatted = json.dumps(parsed, indent=2, ensure_ascii=False)
             # Mask API keys in display
             for line in formatted.split('\n'):
-                if 'apiKey' in line or 'api_key' in line or 'token' in line.lower():
+                line_lower = line.lower()
+                if any(marker in line_lower for marker in ('apikey', 'api_key', 'token', 'secret')):
                     # Mask the value part
                     if ':' in line:
                         key_part, val_part = line.split(':', 1)
                         val_stripped = val_part.strip().strip('"').strip(',')
                         if len(val_stripped) > 8:
                             masked = val_stripped[:6] + '••••••••' + val_stripped[-4:]
-                            line = f'{key_part}: "{masked}",'
+                        else:
+                            masked = '••••••••'
+                        line = f'{key_part}: "{masked}",'
                 text.insert('end', line + '\n')
         except Exception:
             text.insert('end', raw[:3000])
@@ -182,6 +189,11 @@ class MigrationPage(BasePage):
         header.pack(fill='x', padx=10, pady=(6, 2))
         icon = KEY_ICONS.get(item['key'], '📄')
         label = KEY_LABELS.get(item['key'], item['key'])
+        skill_name = ''
+        if item['key'] == 'skills':
+            # A skill's directory name is its canonical Claude/OpenCode name.
+            skill_name = os.path.basename(os.path.dirname(item.get('source', '')))
+            label = f'Skill: {skill_name or "(unnamed)"}'
         PixelToggle(header, text=f'{icon}  {label}', variable=var).pack(side='left')
 
         self.app.root.bind(str(idx + 1), lambda e, v=var: v.set(not v.get()))
@@ -189,7 +201,14 @@ class MigrationPage(BasePage):
         preview = item.get('preview', '')
         preview_color = COLORS['yellow'] if item['key'] == 'api_key' else COLORS['neon_green']
 
-        if item['key'] in ('api_key', 'model'):
+        if item['key'] == 'skills':
+            tk.Label(card, text=f'     名称: {skill_name or "(unnamed)"}', bg=COLORS['dark_gray'],
+                     fg=COLORS['neon_green'], font=(FONTS['body']['family'], FONTS['body']['size'], 'bold'),
+                     anchor='w').pack(fill='x', padx=10)
+            tk.Label(card, text=f'     {preview}', bg=COLORS['dark_gray'], fg=COLORS['white'],
+                     font=(FONTS['log']['family'], FONTS['log']['size']), anchor='w',
+                     wraplength=550, justify='left').pack(fill='x', padx=10)
+        elif item['key'] in ('api_key', 'model'):
             tk.Label(card, text=f'     {preview}', bg=COLORS['dark_gray'], fg=preview_color,
                      font=(FONTS['body']['family'], FONTS['body']['size'], 'bold'),
                      anchor='w').pack(fill='x', padx=10)
@@ -200,7 +219,9 @@ class MigrationPage(BasePage):
 
         src_frame = tk.Frame(card, bg=COLORS['dark_gray'])
         src_frame.pack(fill='x', padx=10, pady=(2, 6))
-        tk.Label(src_frame, text=f'     📁 {item["source_name"]}  →  {item["target"]}',
+        source_text = os.path.abspath(item['source']) if item['key'] == 'skills' else item['source_name']
+        source_prefix = '绝对路径' if item['key'] == 'skills' else '📁'
+        tk.Label(src_frame, text=f'     {source_prefix}: {source_text}  →  {item["target"]}',
                  bg=COLORS['dark_gray'], fg=COLORS['dark_gray'],
                  font=(FONTS['log']['family'], FONTS['log']['size']), anchor='w').pack(fill='x')
 
@@ -223,38 +244,37 @@ class MigrationPage(BasePage):
         for i, var in enumerate(self.vars):
             self.items[i]['checked'] = var.get()
 
-        # Execute migration (copy files)
+        # Execute portable file migration first.
         cc_migrator.migrate(self.items)
         s.migration_items = self.items
 
-        # ── Auto-populate WizardState from migrated data ──
-        # The settings.json 'model' field is just a Claude alias (e.g. "sonnet").
-        # The REAL model is in env.ANTHROPIC_DEFAULT_SONNET_MODEL.
-        for item in self.items:
-            if not item.get('checked'):
-                continue
-            if item['key'] == 'api_key':
-                s.api_key = item.get('content', '')
-            elif item['key'] == 'model':
-                # Don't use settings.json 'model' directly — it's just a Claude alias.
-                # The actual model comes from env vars or nested env object.
-                pass
-
-        # Env vars are HIGHEST priority — always overwrite
-        claude_env = detect_claude_env_vars().get('claude_env_vars', {})
-        env_key = (claude_env.get('ANTHROPIC_API_KEY', '')
-                   or claude_env.get('CLAUDE_CODE_API_KEY', '')
-                   or claude_env.get('ANTHROPIC_AUTH_TOKEN', ''))
-        env_url = claude_env.get('ANTHROPIC_BASE_URL', '')
-        env_model = (claude_env.get('ANTHROPIC_DEFAULT_SONNET_MODEL', '')
-                     or claude_env.get('ANTHROPIC_DEFAULT_OPUS_MODEL', '')
-                     or claude_env.get('ANTHROPIC_MODEL', ''))
-        if env_key:
-            s.api_key = env_key
-        if env_url:
-            s.base_url = env_url
-        if env_model:
-            s.model_id = env_model
+        # Populate exactly the same effective profile shown on this page.
+        profile = extract_profile(runtime_env=os.environ)
+        selected = {item['key'] for item in self.items if item.get('checked')}
+        migration = cc_migrator.migrate_profile_to_opencode(profile, selected)
+        if migration.get('written'):
+            if migration.get('base_url'):
+                s.api_key = migration['api_key']
+                s.base_url = migration['base_url']
+                s.api_style = migration['api_style']
+                s.model_id = migration['model_id']
+                s.model_name = migration['model_id']
+                s.provider_name = migration['provider_name']
+                s.display_name = migration['display_name']
+        else:
+            # Preserve partial values for the model page when a custom Claude
+            # gateway lacks enough information for an automatic write.
+            if 'api_key' in selected and profile['api_key']:
+                s.api_key = profile['api_key']
+            if 'base_url' in selected and profile['base_url']:
+                s.base_url = profile['base_url']
+                s.api_style = profile['api_style']
+            if 'model' in selected and profile['model_id']:
+                s.model_id = profile['model_id']
+            spec = resolve_provider(s.base_url, s.provider_name, s.api_style)
+            s.provider_name = spec.provider_id
+            if not s.display_name:
+                s.display_name = spec.display_name
 
         from ui.pages.environment import EnvironmentPage
         self.app.show_page(EnvironmentPage, 'environment')

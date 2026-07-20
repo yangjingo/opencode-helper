@@ -44,6 +44,18 @@ class ValidationResult:
         """Returns True if the validation succeeded or has a warning."""
         return self.status in (Status.SUCCESS, Status.WARNING)
 
+    def __getitem__(self, key: str):
+        """Small compatibility bridge for integrations using the old dict API."""
+        if key == 'ok':
+            # A legacy endpoint probe considered authentication failures
+            # reachable. The typed ``.ok`` property correctly remains false.
+            return self.status != Status.FAILED or 'status_code' in self.metadata
+        if key == 'message':
+            return self.message
+        if key in self.metadata:
+            return self.metadata[key]
+        raise KeyError(key)
+
 
 @dataclass
 class ValidationReport:

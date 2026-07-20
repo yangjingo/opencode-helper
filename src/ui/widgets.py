@@ -178,6 +178,18 @@ class PixelToggle(tk.Frame):
 
 # ── PixelTerminal ──────────────────────────────────────────────────────────────
 
+def terminal_message_tag(msg: str, requested_tag: str = 'info') -> str:
+    """Choose a visual tag, giving executed shell commands priority.
+
+    Background installers emit commands as ``$ ...`` or ``[PowerShell] $ ...``.
+    Keeping this policy in the terminal makes every installer page consistent.
+    """
+    if requested_tag == 'info':
+        line = (msg or '').lstrip()
+        if line.startswith('$ ') or line.startswith('[PowerShell] $') or line.startswith('[CMD] $'):
+            return 'command'
+    return requested_tag
+
 class PixelTerminal(tk.Frame):
     """Scrollable terminal with pixel border header/footer. Throttled for performance."""
 
@@ -220,6 +232,11 @@ class PixelTerminal(tk.Frame):
         self.text.tag_configure('error', foreground=COLORS['red'])
         self.text.tag_configure('warn', foreground=COLORS['yellow'])
         self.text.tag_configure('success', foreground=COLORS['neon_green'])
+        self.text.tag_configure(
+            'command', foreground=COLORS['yellow'], background=COLORS['dark_gray2'],
+            font=(FONTS['log']['family'], FONTS['log']['size'], 'bold'),
+            lmargin1=6, lmargin2=6, spacing1=2, spacing3=2,
+        )
 
         # Clipboard: Ctrl+C copy, Ctrl+A select all, right-click copy
         self.text.bind('<Control-c>', self._copy)
@@ -252,7 +269,7 @@ class PixelTerminal(tk.Frame):
 
     def write(self, msg: str, tag: str = 'info'):
         """Queue a message. Batched & throttled for performance."""
-        self._pending.append((msg, tag))
+        self._pending.append((msg, terminal_message_tag(msg, tag)))
         if self._throttle_id is None:
             self._throttle_id = self.after(self._throttle_ms, self._flush)
 
